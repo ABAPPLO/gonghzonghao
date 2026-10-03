@@ -14,6 +14,7 @@
   GET  /api/articles          文章列表
   GET  /api/status            出口IP/token状态/草稿箱数
   GET  /api/records           操作记录（最近100条）
+  GET  /api/backlog           选题池 topics/backlog.md 内容
   POST /api/push     {dir}                                            推送已有文章到草稿箱
   POST /api/submit   {title,markdown,digest?,cover_b64,figs:[{name,b64}],push?,agent?,date?}
                                                                     接收新文章并可选直接推送
@@ -412,6 +413,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(api_status())
         elif u.path == "/api/records":
             self._json(get_records())
+        elif u.path == "/api/backlog":
+            f = ROOT / "topics" / "backlog.md"
+            self._json({"content": f.read_text(encoding="utf-8") if f.exists() else ""})
         elif u.path.startswith("/preview/"):
             self._serve_preview(u.path[len("/preview/"):])
         else:

@@ -5,14 +5,38 @@
 ## 分工模式
 
 ```
-agent（创作） ──HTTP──> 发布中枢（凭据+发布） ──> 公众号草稿箱 ──> 管理员手机确认群发
+agent（创作） ──HTTP/MCP──> 发布中枢（凭据+发布） ──> 公众号草稿箱 ──> 管理员手机确认群发
 ```
 
 - agent 只负责：选题 → 写稿 → 生成配图 → 调 API 提交
 - 发布中枢（109 服务器常驻）持有全部微信凭据，负责传图、建草稿、记录
-- 最后一步「群发」由管理员人工确认，agent 不碰
+- **agent 拥有完整发布权限到「草稿箱」**：`push:true` 全自动，无任何人工环节
+- 最后一步「草稿 → 正式群发」由管理员手机确认——这是微信对个人主体账号的平台级限制
+  （freepublish API 权限已被微信回收，不可绕过；换成认证企业主体后才可全自动）
 
 agent 不需要 git、不需要 SSH、不需要任何微信凭据，只需要 HTTP。
+
+## 两种接入方式：MCP（推荐） / HTTP
+
+### 方式一：MCP Server（支持 MCP 的客户端原生调用）
+
+中枢自带零依赖 stdio MCP 服务 `tools/mcp_server.py`，在客户端 mcpServers 配置：
+
+```json
+{
+  "gongzhonghao": {
+    "command": "python",
+    "args": ["/path/to/gongzhonghao/tools/mcp_server.py"],
+    "env": { "HUB_URL": "http://10.168.1.109:8741", "HUB_TOKEN": "<token>" }
+  }
+}
+```
+
+提供 7 个工具：`list_articles`（防撞车）、`read_backlog`（选题池）、
+`submit_article`（提交+推送，核心）、`push_article`、`get_records`、`hub_status`、`build_site`。
+工具描述里带完整写稿规范，模型可自解释使用。
+
+### 方式二：HTTP API（任何能发 HTTP 的环境）
 
 ## 接入地址与认证
 
@@ -57,6 +81,7 @@ Token:    向管理员索取（存在中枢机器的 .dashboard_auth.json，不�
 |---|---|---|
 | `/api/articles` | GET | 已有文章列表（**提交前先查，防选题撞车**） |
 | `/api/records` | GET | 操作记录（谁/何时/成功否/media_id） |
+| `/api/backlog` | GET | 选题池 topics/backlog.md 内容 |
 | `/api/status` | GET | 中枢状态：出口IP / token / 草稿箱数量 |
 | `/api/push` `{"dir":"…"}` | POST | 重推某个已有文章目录（会生成新草稿） |
 | `/api/build` `{}` | POST | 重建发布网站（site/） |
