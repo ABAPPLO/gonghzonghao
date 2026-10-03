@@ -1,0 +1,15 @@
+# 密钥与凭据（绝不提交）
+wechat.json
+.wechat_token.json
+.dashboard_auth.json
+
+# 运行时状态（本机记录，不需要同步）
+records.json
+.push_log.json
+
+# 生成产物（python tools/build_site.py 可随时重建）
+site/
+
+# Python
+__pycache__/
+*.pyc

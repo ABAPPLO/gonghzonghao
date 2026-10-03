@@ -1,0 +1,6 @@
+{
+  "appid": "",
+  "appsecret": "",
+  "author": "",
+  "_说明": "复制为 wechat.json 并填入真实值。appid/appsecret 在微信开发者平台 developers.weixin.qq.com/platform → 我的业务 → 公众号 → 基础信息 → 开发密钥 获取；出口 IP 需加白名单。wechat.json 已被 .gitignore 排除，不会提交。"
+}
