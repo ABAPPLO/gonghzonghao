@@ -23,6 +23,9 @@
 提供的工具:
   list_articles  已发文章列表（防选题撞车）
   read_backlog   选题池 topics/backlog.md
+  add_topic      向选题池登记新选题（防多agent撞车）
+  read_article   读某篇已有文章全文
+  list_drafts    公众号草稿箱列表
   submit_article 提交新文章（markdown+配图base64），默认直接推送草稿箱
   push_article   重推 articles/ 下某个已有文章
   get_records    操作记录
@@ -36,6 +39,7 @@ import os
 import pathlib
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -96,6 +100,31 @@ def t_read_backlog(a: dict) -> str:
     return api("/api/backlog").get("content", "") or "（选题池为空）"
 
 
+def t_add_topic(a: dict) -> str:
+    if not TOKEN:
+        raise RuntimeError("未配置 HUB_TOKEN")
+    r = api("/api/backlog", {"topic": a["topic"], "note": a.get("note", ""),
+                             "agent": a.get("agent", "mcp")})
+    return f"选题已登记进选题池（状态 ✍️）：{r['topic']}\n写完后提交文章；选题池是防撞车的唯一依据"
+
+
+def t_read_article(a: dict) -> str:
+    r = api("/api/article?dir=" + urllib.parse.quote(a["dir"]))
+    md = r.get("markdown", "")
+    return md if md else "（文章为空）"
+
+
+def t_list_drafts(a: dict) -> str:
+    r = api("/api/drafts")
+    if "error" in r:
+        raise RuntimeError("草稿箱读取失败: " + r["error"])
+    items = r.get("items", [])
+    if not items:
+        return "草稿箱为空"
+    lines = [f'{x["update"]}  {x["title"]}' for x in items]
+    return f"草稿箱共 {r.get('total')} 篇（最新 {len(items)} 篇）：\n" + "\n".join(lines)
+
+
 def t_submit_article(a: dict) -> str:
     if not TOKEN:
         raise RuntimeError("未配置 HUB_TOKEN（向管理员索取，配到环境变量或本机 .dashboard_auth.json）")
@@ -152,6 +181,29 @@ TOOLS = [
         "description": "读取选题池（topics/backlog.md，含状态：💡待写/✍️写作中/✅已发/❌放弃）和账号方向说明。",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": t_read_backlog,
+    },
+    {
+        "name": "add_topic",
+        "description": "向选题池登记一个新选题（状态 ✍️）。选题与池中已有内容相似会被拒绝（防多agent撞车）。"
+                      "开工写某选题前先登记，写完用 submit_article 提交。",
+        "inputSchema": {"type": "object", "required": ["topic"],
+                        "properties": {"topic": {"type": "string", "description": "选题，一句话"},
+                                       "note": {"type": "string", "description": "备注（角度/来源）"},
+                                       "agent": {"type": "string", "description": "你的agent名字"}}},
+        "handler": t_add_topic,
+    },
+    {
+        "name": "read_article",
+        "description": "读取某篇已有文章的完整 markdown（参考风格、做互链、检查一致性时用）。dir 从 list_articles 获取。",
+        "inputSchema": {"type": "object", "required": ["dir"],
+                        "properties": {"dir": {"type": "string", "description": "文章目录名，如 2026-09-22-三巨头AI安全联盟"}}},
+        "handler": t_read_article,
+    },
+    {
+        "name": "list_drafts",
+        "description": "查看公众号草稿箱里的草稿（标题+更新时间），核实提交结果。",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": t_list_drafts,
     },
     {
         "name": "submit_article",

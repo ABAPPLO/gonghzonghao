@@ -16,11 +16,29 @@ agent（创作） ──HTTP/MCP──> 发布中枢（凭据+发布） ──> 
 
 agent 不需要 git、不需要 SSH、不需要任何微信凭据，只需要 HTTP。
 
-## 两种接入方式：MCP（推荐） / HTTP
+## 两种接入方式：HTTP（推荐外部 agent）/ stdio
 
-### 方式一：MCP Server（支持 MCP 的客户端原生调用）
+### 方式一：MCP over HTTP（Streamable HTTP，客户端机器零文件）
 
-中枢自带零依赖 stdio MCP 服务 `tools/mcp_server.py`，在客户端 mcpServers 配置：
+MCP 客户端直接连中枢的 MCP 端点，配置示例（支持 url 型 MCP 的客户端，如 Cursor/Cline/新版 ZCode 等）：
+
+```json
+{
+  "gongzhonghao": {
+    "url": "http://10.168.1.109:8741/mcp",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
+}
+```
+
+- 鉴权：`Authorization: Bearer <token>`（或 `X-Auth` 头），无 Token 一律 401
+- 协议：POST JSON-RPC（initialize / tools/list / tools/call / ping），GET /mcp 按规范返回 405
+- 自检：`MCP_TRANSPORT=http HUB_URL=http://10.168.1.109:8741 python tools/mcp_client_test.py`
+- 工具一览页：`/tools`（人看），`/tools?format=json`（机器看）
+
+### 方式二：stdio（ZCode / Claude Desktop 传统方式）
+
+配置 `tools/mcp_server.py`（本机需要该文件）：
 
 ```json
 {
@@ -32,9 +50,11 @@ agent 不需要 git、不需要 SSH、不需要任何微信凭据，只需要 HT
 }
 ```
 
-提供 7 个工具：`list_articles`（防撞车）、`read_backlog`（选题池）、
+提供 10 个工具：`list_articles`（防撞车）、`read_backlog`（选题池）、`add_topic`（登记新选题）、
+`read_article`（读已有文章全文）、`list_drafts`（草稿箱核实）、
 `submit_article`（提交+推送，核心）、`push_article`、`get_records`、`hub_status`、`build_site`。
 工具描述里带完整写稿规范，模型可自解释使用。
+自检：`python tools/mcp_client_test.py`（stdio 全量）、`MCP_TRANSPORT=http python tools/mcp_client_test.py`（HTTP 端点）、`SKIP_SUBMIT=1`（只读）。
 
 ### 方式二：HTTP API（任何能发 HTTP 的环境）
 
@@ -82,6 +102,9 @@ Token:    向管理员索取（存在中枢机器的 .dashboard_auth.json，不�
 | `/api/articles` | GET | 已有文章列表（**提交前先查，防选题撞车**） |
 | `/api/records` | GET | 操作记录（谁/何时/成功否/media_id） |
 | `/api/backlog` | GET | 选题池 topics/backlog.md 内容 |
+| `/api/backlog` `{"topic","note?","agent?"}` | POST | **登记新选题**（✍️状态）；与池中已有选题相似会被拒绝（防撞车） |
+| `/api/article?dir=…` | GET | 读某篇文章完整 markdown |
+| `/api/drafts` | GET | 微信草稿箱列表（标题+更新时间） |
 | `/api/status` | GET | 中枢状态：出口IP / token / 草稿箱数量 |
 | `/api/push` `{"dir":"…"}` | POST | 重推某个已有文章目录（会生成新草稿） |
 | `/api/build` `{}` | POST | 重建发布网站（site/） |
@@ -100,7 +123,7 @@ curl -X POST "http://10.168.1.109:8741/api/submit" \
 3. 配图风格统一：深蓝靛蓝科技风 + 微软雅黑（参照 `tools/figure_kit.py` 组件；现有文章 `articles/*/fig*.png` 是视觉基准）
 4. 正文**不放外链**；引用来源在文末「参考资料」小节写名称
 5. 文末固定加引导关注段落
-6. 选题参考 `topics/backlog.md`（状态 💡待写/✍️写作中/✅已发/❌放弃）；新选题在提交的 markdown 文末用注释注明来源 `<!-- 选题来源: xxx -->`，由中枢侧人工回填选题池
+6. 选题参考 `topics/backlog.md`（状态 💡待写/✍️写作中/✅已发/❌放弃）；**开工前用 `add_topic`（或 POST /api/backlog）登记选题**（相似选题会被拒绝，这是多 agent 防撞车机制），写完提交，状态由中枢侧人工或下次盘点时更新
 
 ## 提交前自检清单
 

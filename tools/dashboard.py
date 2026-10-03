@@ -26,9 +26,11 @@
 from __future__ import annotations
 
 import base64
+import html
 import http.server
 import json
 import mimetypes
+import os
 import pathlib
 import re
 import socket
@@ -215,6 +217,44 @@ def do_submit(data: dict, actor: str) -> dict:
     return result
 
 
+def api_drafts() -> dict:
+    """读微信草稿箱列表（标题+更新时间）。"""
+    cfg = publish_wechat.load_cfg()
+    token = publish_wechat.get_token(cfg)
+    req = urllib.request.Request(
+        "https://api.weixin.qq.com/cgi-bin/draft/batchget?access_token=" + token,
+        data=json.dumps({"offset": 0, "count": 5}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    if d.get("errcode"):
+        return {"error": f"{d['errcode']}: {d.get('errmsg', '')}"}
+    items = []
+    for it in d.get("item", []):
+        news = (it.get("content") or {}).get("news_item") or [{}]
+        items.append({"title": news[0].get("title", ""),
+                      "update": datetime.fromtimestamp(it.get("update_time", 0)).strftime("%m-%d %H:%M")})
+    return {"total": d.get("total_count", len(items)), "items": items}
+
+
+def do_add_topic(topic: str, note: str, agent: str) -> dict:
+    """向选题池追加一行（状态 ✍️）；选题与池中已有内容撞车则拒绝。"""
+    f = ROOT / "topics" / "backlog.md"
+    text = (f.read_text(encoding="utf-8") if f.exists()
+            else "# 选题池\n\n| 日期 | 选题 | 状态 | 备注 |\n|------|------|------|------|\n")
+    norm = re.sub(r"\s+", "", topic)
+    if norm:
+        for line in text.splitlines():
+            if norm in re.sub(r"\s+", "", line):
+                raise RuntimeError(f"选题池已有相似选题（撞车）：{line.strip()[:60]}")
+    remark = note or (f"agent提交（{agent}）" if agent else "agent提交")
+    text = text.rstrip("\n") + f"\n| {datetime.now().strftime('%Y-%m-%d')} | {topic} | ✍️ | {remark} |\n"
+    f.parent.mkdir(exist_ok=True)
+    f.write_text(text, encoding="utf-8")
+    add_record("topic", True, actor="api", agent=agent, title=topic)
+    return {"ok": True, "topic": topic, "status": "✍️"}
+
+
 def do_build(actor: str) -> dict:
     import build_site
     build_site.build()
@@ -375,6 +415,71 @@ refresh();
 </script></body></html>"""
 
 
+def esc(s, quote: bool = False) -> str:
+    return html.escape(s, quote=quote)
+
+
+def mcp_page_html() -> str:
+    """生成 /mcp 工具一览页（数据直接取自 mcp_server.TOOLS，永远与实际一致）。"""
+    import mcp_server as ms
+
+    cards = []
+    for t in ms.TOOLS:
+        props = t["inputSchema"].get("properties", {})
+        required = set(t["inputSchema"].get("required", []))
+        rows = "".join(
+            f'<tr><td class="k">{esc(k)}</td><td>{esc(str(v.get("type", "")))}</td>'
+            f'<td>{"<b>必填</b>" if k in required else "可选"}</td>'
+            f'<td class="d">{esc(str(v.get("description", "")))}</td></tr>'
+            for k, v in props.items())
+        params = (f'<table><tr><th>参数</th><th>类型</th><th></th><th>说明</th></tr>{rows}</table>'
+                  if props else '<p class="none">（无参数）</p>')
+        cards.append(f'<div class="tool"><h3>{esc(t["name"])}</h3>'
+                     f'<p class="desc">{esc(t["description"])}</p>{params}</div>')
+
+    return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MCP 工具一览 · 公众号发布中枢</title>
+<style>
+:root{{--acc:#3b5bfd;--ink:#171a21;--muted:#8a8f99;--line:#e6e8ef;--bg:#f4f5f9}}
+*{{box-sizing:border-box}}
+body{{margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:#3f3f46;font-size:15px}}
+header{{background:linear-gradient(135deg,#0c1130,#1c2757);color:#fff;padding:30px 0 26px}}
+.hi{{max-width:860px;margin:0 auto;padding:0 20px}}
+header h1{{margin:0 0 6px;font-size:22px}}
+header p{{margin:0;color:#aab6e8;font-size:13.5px}}
+main{{max-width:860px;margin:0 auto;padding:24px 20px 60px}}
+.tool{{background:#fff;border:1px solid var(--line);border-radius:13px;padding:18px 20px;margin-bottom:14px}}
+.tool h3{{margin:0 0 8px;font-size:16.5px;color:var(--ink);font-family:Consolas,monospace}}
+.tool .desc{{margin:0 0 10px;font-size:13.5px;line-height:1.8}}
+table{{border-collapse:collapse;width:100%}}
+th{{text-align:left;font-size:12px;color:var(--muted);padding:5px 10px;border-bottom:1px solid var(--line)}}
+td{{font-size:13px;padding:6px 10px;border-bottom:1px solid #f0f2f6;vertical-align:top}}
+td.k{{font-family:Consolas,monospace;color:var(--acc)}}
+td.d{{color:var(--muted);font-size:12.5px}}
+.none{{color:var(--muted);font-size:13px;margin:0}}
+.how{{background:#fff;border:1px dashed var(--line);border-radius:12px;padding:16px 18px;font-size:13px;color:var(--muted);line-height:1.9}}
+.how code{{background:#f0f2f8;border-radius:4px;padding:1px 6px;font-size:12px}}
+b{{color:#0aa06e}}
+</style></head><body>
+<header><div class="hi">
+<h1>MCP 工具一览（{len(ms.TOOLS)} 个）</h1>
+<p>公众号发布中枢 · 数据实时取自 mcp_server.py，与实际可用工具始终一致</p>
+</div></header>
+<main>
+{''.join(cards)}
+<div class="how">
+<b>接入方式一（HTTP，推荐外部 agent）</b>：MCP 客户端直接连 <code>POST /mcp</code>（Streamable HTTP 传输），
+鉴权头 <code>Authorization: Bearer &lt;token&gt;</code>（或 <code>X-Auth</code>）。<br>
+<b>接入方式二（stdio）</b>：配置 <code>command: python tools/mcp_server.py</code>，
+env 给 <code>HUB_URL</code>（本页地址）与 <code>HUB_TOKEN</code>；中枢机器上 Token 自动读取。<br>
+<b>机器可读清单</b>：<code>GET /tools?format=json</code> 返回全部工具的 name / description / inputSchema。<br>
+<b>自检</b>：<code>python tools/mcp_client_test.py</code>（stdio 全量）或
+<code>MCP_TRANSPORT=http python tools/mcp_client_test.py</code>（HTTP 端点）。
+</div>
+</main></body></html>"""
+
+
 # ---------- HTTP ----------
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -398,6 +503,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _check_auth(self) -> bool:
         return self.headers.get("X-Auth", "") == get_auth_token()
 
+    def _mcp_http_post(self):
+        """MCP Streamable HTTP 端点：POST JSON-RPC -> JSON 响应（本服务无服务端主动推送，GET/DELETE 返回 405）。"""
+        auth = self.headers.get("Authorization", "")
+        bearer = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+        token = get_auth_token()
+        if bearer != token and self.headers.get("X-Auth", "") != token:
+            return self._json({"jsonrpc": "2.0", "id": None,
+                               "error": {"code": -32001,
+                                         "message": "缺少或错误 Token（Authorization: Bearer <token> 或 X-Auth 头）"}}, 401)
+        try:
+            msg = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8"))
+        except Exception as e:
+            return self._json({"jsonrpc": "2.0", "id": None,
+                               "error": {"code": -32700, "message": f"parse error: {e}"}}, 400)
+        import mcp_server
+        resp = mcp_server.handle(msg)
+        if resp is None:  # notification：按 MCP 规范 202 即可
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = json.dumps(resp, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        """浏览器类 MCP 客户端的 CORS 预检。"""
+        self.send_response(204)
+        for k, v in {"Access-Control-Allow-Origin": "*",
+                     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+                     "Access-Control-Allow-Headers":
+                         "Content-Type, Authorization, X-Auth, Mcp-Session-Id, Last-Event-ID"}.items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
         if u.path in ("/", "/index.html"):
@@ -416,6 +561,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif u.path == "/api/backlog":
             f = ROOT / "topics" / "backlog.md"
             self._json({"content": f.read_text(encoding="utf-8") if f.exists() else ""})
+        elif u.path == "/api/article":
+            qs = urllib.parse.parse_qs(u.query)
+            d = (qs.get("dir") or [""])[0]
+            f = (ARTICLES / d).resolve()
+            if not d or not str(f).startswith(str(ARTICLES.resolve())) or not (f / "article.md").is_file():
+                return self._json({"error": "文章不存在"}, 404)
+            self._json({"dir": d, "markdown": (f / "article.md").read_text(encoding="utf-8")})
+        elif u.path == "/api/drafts":
+            self._json(api_drafts())
+        elif u.path == "/mcp":
+            # MCP Streamable HTTP 端点只接受 POST；GET 按 MCP 规范返回 405
+            self.send_response(405)
+            self.send_header("Allow", "POST, OPTIONS")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif u.path in ("/tools", "/tools/"):
+            if urllib.parse.parse_qs(u.query).get("format", [""])[0] == "json":
+                import mcp_server as ms
+                return self._json({"tools": [{"name": t["name"],
+                                              "description": t["description"],
+                                              "inputSchema": t["inputSchema"]}
+                                             for t in ms.TOOLS]})
+            body = mcp_page_html().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif u.path.startswith("/preview/"):
             self._serve_preview(u.path[len("/preview/"):])
         else:
@@ -444,7 +617,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
-        if u.path not in ("/api/push", "/api/submit", "/api/build"):
+        if u.path == "/mcp":
+            return self._mcp_http_post()
+        if u.path not in ("/api/push", "/api/submit", "/api/build", "/api/backlog"):
             return self.send_error(404)
         if not self._check_auth():
             add_record("auth-fail", False, actor=self.actor, action_hint=u.path)
@@ -462,6 +637,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/submit":
                 r = do_submit(data, self.actor)
                 print(f"[中枢] 收到提交 {r['dir']} (来自 {self.actor})")
+                return self._json(r)
+            if u.path == "/api/backlog":
+                topic = (data.get("topic") or "").strip()
+                if not topic:
+                    return self._json({"error": "缺少 topic 参数"}, 400)
+                r = do_add_topic(topic, data.get("note", ""), data.get("agent", ""))
+                print(f"[中枢] 新选题登记: {topic} (来自 {self.actor})")
                 return self._json(r)
             if u.path == "/api/build":
                 return self._json(do_build(self.actor))
@@ -492,6 +674,8 @@ def main() -> None:
     except Exception:
         pass
     port = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 8741
+    # /mcp 端点内嵌的 mcp_server 调中枢 API 时走本机回环
+    os.environ.setdefault("HUB_URL", f"http://127.0.0.1:{port}")
     token = get_auth_token()
     httpd = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print("=" * 56)
