@@ -44,6 +44,7 @@ from datetime import datetime
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
+import md2wechat  # noqa: E402
 import publish_wechat  # noqa: E402
 
 ARTICLES = ROOT / "articles"
@@ -597,7 +598,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _serve_preview(self, rel: str):
         base = ARTICLES.resolve()
         target = (base / urllib.parse.unquote(rel)).resolve()
-        if not str(target).startswith(str(base)) or not target.is_file():
+        if not str(target).startswith(str(base)):
+            self.send_error(404)
+            return
+        if not target.is_file():
+            # agent 经 /api/submit 提交的文章只有 article.md（无手工排版 html）→ 实时渲染预览
+            if target.name == "article.html" and (target.parent / "article.md").is_file():
+                body = md2wechat.convert(
+                    (target.parent / "article.md").read_text(encoding="utf-8")
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             self.send_error(404)
             return
         body = target.read_bytes()
